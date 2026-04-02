@@ -1,0 +1,53 @@
+services:
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+  app:
+    build: .
+    depends_on:
+      redis:
+        condition: service_healthy
+    environment:
+      - CLOUDFLARE_ACCOUNT_ID=${CLOUDFLARE_ACCOUNT_ID}
+      - CLOUDFLARE_API_KEY=${CLOUDFLARE_API_KEY}
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
+      - TARGET_REPO=${TARGET_REPO}
+      - WEBHOOK_PORT=3456
+      - WEBHOOK_SECRET=${WEBHOOK_SECRET}
+    ports:
+      - "3456:3456"
+    volumes:
+      - ${TARGET_REPO:-./target-repo}:${TARGET_REPO:-/app/target-repo}
+    command: ["npx", "tsx", "src/index.ts"]
+
+  webhook:
+    build: .
+    depends_on:
+      redis:
+        condition: service_healthy
+    environment:
+      - CLOUDFLARE_ACCOUNT_ID=${CLOUDFLARE_ACCOUNT_ID}
+      - CLOUDFLARE_API_KEY=${CLOUDFLARE_API_KEY}
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
+      - TARGET_REPO=${TARGET_REPO}
+      - WEBHOOK_PORT=3456
+      - WEBHOOK_SECRET=${WEBHOOK_SECRET}
+    ports:
+      - "3457:3456"
+    volumes:
+      - ${TARGET_REPO:-./target-repo}:${TARGET_REPO:-/app/target-repo}
+    command: ["npx", "tsx", "src/webhook-server.ts"]
+
+volumes:
+  redis_data:
