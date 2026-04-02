@@ -2,96 +2,56 @@
 
 ## Prerequisites
 
-- **Docker + Docker Compose** — for running the machine runner and Redis
-- **CircleCI account** with machine runner access
+- **GitHub repository** — any TypeScript/JavaScript codebase
 - **Cloudflare Workers AI credentials** — for the AI agents
-- **GitHub token** (optional) — for automatic PR creation
+- **Docker + Docker Compose** — for local testing (GitHub Actions has it built-in)
 
-## Step 1: Create a CircleCI Machine Runner
+## Step 1: Add Cloudflare Secrets
 
-You need a namespace and resource class for your organization:
+Go to your GitHub repo → **Settings** → **Secrets and variables** → **Actions** → **New repository secret**:
 
-```bash
-# Create namespace (skip if you already have one)
-circleci namespace create <your-org> --org-id <your-org-id>
+| Secret | Description |
+|---|---|
+| `CLOUDFLARE_ACCOUNT_ID` | Your Cloudflare account ID |
+| `CLOUDFLARE_API_KEY` | Your Cloudflare API token |
 
-# Create resource class and get the token
-circleci runner resource-class create <your-org>/lemon-runner "AI test runner" --generate-token
-```
+## Step 2: The Workflow Is Already Included
 
-Save the resource class token — you'll need it in the next step.
+The file `.github/workflows/ai-test-loop.yml` is already in the repo. It triggers on every push and PR (except `main`).
 
-## Step 2: Configure Environment Variables
-
-```bash
-cp .env.example .env
-```
-
-Edit `.env` with your values:
-
-```env
-# Cloudflare Workers AI (for AI agents)
-CLOUDFLARE_ACCOUNT_ID=your-account-id
-CLOUDFLARE_API_KEY=your-api-key
-
-# Redis (internal state)
-REDIS_HOST=redis
-REDIS_PORT=6379
-
-# CircleCI Machine Runner
-CIRCLECI_RUNNER_NAME=lemon-runner
-CIRCLECI_RUNNER_API_AUTH_TOKEN=<token-from-step-1>
-
-# GitHub (for PR creation, optional)
-GITHUB_TOKEN=your-github-token
-```
-
-## Step 3: Start the Runner
+## Step 3: Push and Watch
 
 ```bash
-docker compose -f docker-compose.runner.yml up -d
-```
-
-This starts two containers:
-- **Redis** — state management for agent communication
-- **Runner** — extends `circleci/runner-agent:machine-3` with Node.js, git, and lemon.test source code
-
-The runner immediately connects to CircleCI and waits for jobs.
-
-## Step 4: Set Up Your Target Repository
-
-```bash
-npx lemonx init /path/to/your/repo
-```
-
-This generates `.circleci/config.yml` in your target repo. Open it and replace `<namespace>/<resource-class>` with your actual resource class (e.g., `my-org/lemon-runner`).
-
-## Step 5: Push and Watch It Work
-
-```bash
-git add .circleci/config.yml
-git commit -m "Add lemon.test AI testing"
 git push origin feature/my-branch
 ```
 
-CircleCI will:
-1. Route the job to your machine runner
-2. The runner executes the AI test-fix loop directly on your code
-3. CircleCI receives the results and passes/fails the pipeline
+GitHub Actions will automatically:
+1. Check out your code
+2. Build Docker Compose (Redis + AI agents)
+3. Run the AI test-fix loop
+4. Pass or fail the job based on results
 
-## What Happens Next
+## What Happens
 
-When a push triggers the pipeline:
+When a push triggers the workflow:
 
 1. **Discovery** — AI agents scan your source files (up to 5 for unit tests, 5 for integration, 3 for E2E)
 2. **Generation** — Tests are written to `src/__tests__/`, `tests/integration/`, and `tests/e2e/`
 3. **Execution** — Tests run via vitest, results stored in Redis
 4. **Fixing** — Failed tests are analyzed and source code is patched
 5. **Iteration** — Steps 3-4 repeat up to 5 times
-6. **Report** — Results returned to CircleCI, pipeline passes or fails
+6. **Result** — Job passes if all tests pass, fails otherwise
+
+## Local Development
+
+```bash
+cp .env.example .env
+# Edit .env with your Cloudflare credentials
+npm run docker:up
+```
 
 ## Next Steps
 
 - Read about the [architecture](/architecture/overview) to understand how agents work
 - Explore the [API reference](/reference/agents) for detailed tool and agent documentation
-- Learn about [deployment options](/deployment/machine-runner) for production setups
+- Learn about [GitHub Actions deployment](/deployment/github-actions) for configuration options

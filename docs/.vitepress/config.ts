@@ -10,7 +10,7 @@ export default defineConfig({
       { text: 'Guide', link: '/guide/getting-started' },
       { text: 'Architecture', link: '/architecture/overview' },
       { text: 'Reference', link: '/reference/agents' },
-      { text: 'Deployment', link: '/deployment/machine-runner' },
+      { text: 'Deployment', link: '/deployment/github-actions' },
     ],
     sidebar: [
       {
@@ -43,15 +43,8 @@ export default defineConfig({
       {
         text: 'Deployment',
         items: [
-          { text: 'Machine Runner', link: '/deployment/machine-runner' },
-          { text: 'CircleCI Integration', link: '/deployment/circleci' },
+          { text: 'GitHub Actions', link: '/deployment/github-actions' },
           { text: 'Docker Setup', link: '/deployment/docker' },
-        ],
-      },
-      {
-        text: 'CLI Package',
-        items: [
-          { text: 'lemonx CLI', link: '/reference/cli' },
         ],
       },
       {

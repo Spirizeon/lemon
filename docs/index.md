@@ -23,9 +23,9 @@ features:
   - icon: 🔁
     title: Self-Healing Test Loop
     details: Tests run, failures are analyzed, and the editor agent applies source code fixes automatically. The loop iterates until everything passes.
-  - icon: 🏗️
-    title: CircleCI Machine Runner
-    details: Runs directly on your own infrastructure via CircleCI machine runners. No webhooks, no tunnels, no external servers. Push to any branch and it just works.
+  - icon: 🐙
+    title: GitHub Actions Native
+    details: Runs as a GitHub Actions job on every push and PR. Your code never leaves your repository — the AI agents work directly on the checked-out code.
   - icon: 📋
     title: Full Auditability
     details: Every test result, code analysis, and patch flows through Redis as an event log. Full traceability across every iteration and agent decision.
@@ -36,15 +36,14 @@ features:
 Get up and running in minutes:
 
 ```bash
-# 1. Start the CircleCI machine runner
-docker compose -f docker-compose.runner.yml up -d
+# 1. Add Cloudflare credentials to your repo secrets
+#    Settings → Secrets → CLOUDFLARE_ACCOUNT_ID, CLOUDFLARE_API_KEY
 
-# 2. Initialize your target repository
-npx lemonx init /path/to/your/repo
-
-# 3. Push to any branch and watch it work
+# 2. Push to any branch (not main)
 git push origin feature/my-branch
 ```
+
+GitHub Actions will automatically run the AI test-fix loop.
 
 ## How It Works
 
@@ -53,20 +52,14 @@ git push origin feature/my-branch
 │  Your Repo      │
 │  (GitHub)       │
 └────────┬────────┘
-         │ push
-         ▼
-┌─────────────────┐
-│  CircleCI Cloud │
-│  (assigns job)  │
-└────────┬────────┘
-         │ routes to your runner
+         │ push / PR
          ▼
 ┌─────────────────────────────────────┐
-│        Your Machine Runner          │
+│     GitHub Actions Runner           │
 │                                     │
 │  ┌───────────┐  ┌───────────────┐   │
-│  │  Runner   │  │    Redis      │   │
-│  │  Agent    │  │  (state/log)  │   │
+│  │  Checkout │  │    Redis      │   │
+│  │  (code)   │  │  (state/log)  │   │
 │  └─────┬─────┘  └───────┬───────┘   │
 │        │                │           │
 │        ▼                ▼           │
@@ -90,16 +83,7 @@ git push origin feature/my-branch
 |---|---|
 | **Agents** | Five specialized AI agents powered by Mastra, each with a distinct role in the test lifecycle |
 | **Tools** | Purpose-built file I/O, Redis operations, and test runner tools that agents use to interact with your codebase |
-| **Workflows** | Choose from `ai-test-loop` (full cycle), `ai-generate-tests`, or `ai-run-tests` |
-| **Runner** | CircleCI Machine Runner 3 running on Docker — your code never leaves your infrastructure |
-
-## Available Workflows
-
-| Workflow | What it does |
-|---|---|
-| `ai-test-loop` | Full generate + run + fix cycle for unit, integration, and E2E tests |
-| `ai-generate-tests` | Generate unit tests only |
-| `ai-run-tests` | Run existing tests only |
+| **Runner** | GitHub Actions runner — your code is checked out, Docker Compose spins up Redis + AI agents, results determine job success/failure |
 
 ## Tech Stack
 
@@ -108,7 +92,7 @@ git push origin feature/my-branch
 - **Test Framework** — vitest
 - **State** — Redis (ioredis) + LibSQL (agent memory)
 - **Runtime** — TypeScript, tsx, Node.js
-- **CI/CD** — CircleCI Machine Runner 3 on Docker
+- **CI/CD** — GitHub Actions
 
 ## Explore the Docs
 
@@ -117,4 +101,4 @@ git push origin feature/my-branch
 | [Guide](/guide/getting-started) | Getting started, quick start, and how the platform works |
 | [Architecture](/architecture/overview) | Deep dive into agents, tools, control flow, and state management |
 | [Reference](/reference/agents) | Agents API, tools API, entry points, and configuration |
-| [Deployment](/deployment/machine-runner) | Machine runner setup, CircleCI integration, and Docker configuration |
+| [Deployment](/deployment/github-actions) | GitHub Actions workflow, Docker setup, and secrets configuration |

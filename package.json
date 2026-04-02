@@ -4,7 +4,8 @@
   "scripts": {
     "dev": "tsx src/index.ts",
     "start": "npx tsx src/index.ts",
-    "webhook": "npx tsx src/webhook-server.ts",
+    "docker:up": "docker compose up --build --abort-on-container-exit --exit-code-from lemon",
+    "docker:down": "docker compose down -v",
     "test": "vitest run",
     "test:integration": "vitest run tests/integration",
     "test:e2e": "vitest run tests/e2e",

@@ -11,7 +11,7 @@ services:
       timeout: 3s
       retries: 5
 
-  app:
+  lemon:
     build: .
     depends_on:
       redis:
@@ -21,29 +21,10 @@ services:
       - CLOUDFLARE_API_KEY=${CLOUDFLARE_API_KEY}
       - REDIS_HOST=redis
       - REDIS_PORT=6379
-      - WEBHOOK_PORT=3456
-      - WEBHOOK_SECRET=${WEBHOOK_SECRET}
-    ports:
-      - "3456:3456"
     volumes:
-      - ./target-repo:/app/target-repo
+      - .:/app
+    working_dir: /app
     command: ["npx", "tsx", "src/index.ts"]
-
-  webhook:
-    build: .
-    depends_on:
-      redis:
-        condition: service_healthy
-    environment:
-      - CLOUDFLARE_ACCOUNT_ID=${CLOUDFLARE_ACCOUNT_ID}
-      - CLOUDFLARE_API_KEY=${CLOUDFLARE_API_KEY}
-      - REDIS_HOST=redis
-      - REDIS_PORT=6379
-      - WEBHOOK_PORT=3456
-      - WEBHOOK_SECRET=${WEBHOOK_SECRET}
-    ports:
-      - "3456:3456"
-    command: ["npx", "tsx", "src/webhook-server.ts"]
 
 volumes:
   redis_data:
