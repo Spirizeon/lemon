@@ -6,16 +6,16 @@ An agentic AI testing platform that autonomously generates, executes, and fixes 
 
 ## How It Works
 
-lemon.test runs on a CircleCI machine runner. When you push to any branch, CircleCI assigns the job to your runner, which:
+lemon.test runs as a GitHub Actions workflow. When you push to any branch, the AI agents:
 
-1. **Clones your repo** — CircleCI checks out your code directly on the runner
-2. **Generates tests** — AI agents read your source code and write comprehensive vitest tests
-3. **Runs tests** — The executor runs tests and records pass/fail results
-4. **Fixes failures** — The editor agent analyzes failures and applies code fixes
-5. **Iterates** — Steps 3-4 repeat until all tests pass or max iterations reached
-6. **Reports back** — CircleCI receives the results and gates your pipeline
+1. **Discover source files** — Scans your codebase for testable files
+2. **Generate tests** — AI agents read your source code and write comprehensive vitest tests
+3. **Run tests** — The executor runs tests and records pass/fail results
+4. **Fix failures** — The editor agent analyzes failures and applies code fixes
+5. **Iterate** — Steps 3-4 repeat until all tests pass or max iterations reached
+6. **Gate your pipeline** — The GitHub Actions job passes or fails based on results
 
-No webhooks, no tunnels, no external servers needed.
+No external servers, no webhooks, no tunnels. Your code never leaves your repository.
 
 ## Architecture
 
@@ -29,108 +29,68 @@ The system uses a multi-agent architecture powered by [Mastra](https://mastra.ai
 | `executorAgent` | Runs tests via vitest and stores results in Redis |
 | `editorAgent` | Reads failures from Redis and applies source code fixes |
 
-Agents communicate through Redis, which serves as an event log for test results, code analysis, and patches -- enabling full auditability across iterations.
+Agents communicate through Redis, which serves as an event log for test results, code analysis, and patches — enabling full auditability across iterations.
 
 ### Tools
 
 Each agent is equipped with purpose-built tools:
 
-- **File I/O** -- Read, write, and list files in the target repository
-- **Redis Operations** -- Store/fetch analysis, test results, and generated tests
-- **Test Runner** -- Execute vitest and parse pass/fail output
+- **File I/O** — Read, write, and list files in the target repository
+- **Redis Operations** — Store/fetch analysis, test results, and generated tests
+- **Test Runner** — Execute vitest and parse pass/fail output
 
-## Prerequisites
+## Quick Start
 
-- Docker + Docker Compose
-- CircleCI account with machine runner access
-- Cloudflare Workers AI API credentials
-- GitHub token (for PR creation, optional)
+### 1. Add Cloudflare Secrets
 
-## Setup
+Go to your GitHub repo → **Settings** → **Secrets and variables** → **Actions** → **New repository secret**:
 
-### 1. Create a CircleCI machine runner
+| Secret | Description |
+|---|---|
+| `CLOUDFLARE_ACCOUNT_ID` | Your Cloudflare account ID |
+| `CLOUDFLARE_API_KEY` | Your Cloudflare API token |
+
+### 2. Push to Any Branch
 
 ```bash
-# Create namespace (skip if you already have one)
-circleci namespace create <your-org> --org-id <your-org-id>
-
-# Create resource class and get the token
-circleci runner resource-class create <your-org>/lemon-runner "AI test runner" --generate-token
+git push origin feature/my-branch
 ```
 
-Save the resource class token — you'll need it next.
+GitHub Actions will automatically run the AI test-fix loop. The job passes if all tests pass, fails otherwise.
 
-### 2. Configure environment variables
+## Local Development
 
 ```bash
 cp .env.example .env
+# Edit .env with your Cloudflare credentials
+npm run docker:up
 ```
 
-Edit `.env` with your values:
-
-```env
-CLOUDFLARE_ACCOUNT_ID=your-account-id
-CLOUDFLARE_API_KEY=your-api-key
-CIRCLECI_RUNNER_NAME=lemon-runner
-CIRCLECI_RUNNER_API_AUTH_TOKEN=<token-from-step-1>
-GITHUB_TOKEN=your-github-token        # optional, for PR creation
-```
-
-### 3. Start the runner
-
-```bash
-docker compose -f docker-compose.runner.yml up -d
-```
-
-This starts a Redis container and the CircleCI machine runner container. The runner immediately connects to CircleCI and waits for jobs.
-
-### 4. Set up your target repository
-
-```bash
-npx lemonx init /path/to/your/repo
-```
-
-This generates `.circleci/config.yml` in your target repo. Open it and replace `<namespace>/<resource-class>` with your actual resource class (e.g., `my-org/lemon-runner`).
-
-### 5. Push and watch it work
-
-Push to any branch (not main) and CircleCI will:
-
-1. Route the job to your machine runner
-2. The runner executes the AI test-fix loop directly on your code
-3. CircleCI receives the results and passes/fails the pipeline
-
-## Machine Runner Architecture
+## Architecture Diagram
 
 ```
 Your Repo (GitHub)
        │
-       │ push
+       │ push / PR
        ▼
-  CircleCI Cloud
-       │
-       │ assigns job
-       ▼
-Your Machine Runner (Docker)
-  ├── circleci/runner-agent:machine-3  (CircleCI runner)
-  ├── Redis                            (agent state)
-  └── lemon.test agents
-       ├── testGeneratorAgent
-       ├── integrationGeneratorAgent
-       ├── e2eGeneratorAgent
-       ├── executorAgent
-       └── editorAgent
+GitHub Actions Runner (ubuntu-latest)
+   ├── Checkout your code
+   ├── Redis (agent state)
+   └── lemon.test agents
+        ├── testGeneratorAgent
+        ├── integrationGeneratorAgent
+        ├── e2eGeneratorAgent
+        ├── executorAgent
+        └── editorAgent
 ```
-
-The runner image (`Dockerfile.runner`) extends `circleci/runner-agent:machine-3` with Node.js, git, and the lemon.test source code. CircleCI jobs run directly inside this environment.
 
 ## Available Workflows
 
 | Workflow | What it does |
 |---|---|
 | `ai-test-loop` | Full generate + run + fix cycle for unit, integration, and E2E tests (default) |
-| `ai-generate-tests` | Generate unit tests only |
-| `ai-run-tests` | Run existing tests only |
+
+Triggers on every push and pull request (except `main`).
 
 ## Tech Stack
 
@@ -141,7 +101,7 @@ The runner image (`Dockerfile.runner`) extends `circleci/runner-agent:machine-3`
 - **State Management**: Redis (ioredis) for results/analysis/patches, LibSQL for agent memory
 - **Schema Validation**: Zod
 - **Runtime**: tsx
-- **Runner**: CircleCI Machine Runner 3 on Docker
+- **CI/CD**: GitHub Actions + Docker Compose
 
 ## Project Structure
 
@@ -168,14 +128,6 @@ src/
         └── runner/                 # Test execution tool
 ```
 
-## CLI Package
-
-The `lemonx` npm package generates CircleCI config for target repositories.
-
-```bash
-npx lemonx init /path/to/your/repo
-```
-
 ## Testing
 
 The project includes integration and E2E tests powered by vitest.
@@ -191,10 +143,16 @@ npm run test:integration
 npm run test:e2e
 ```
 
-## CI/CD
+## Documentation
 
-The project includes a CircleCI pipeline with an AI review gatekeeper that checks for acknowledged AI comments before allowing merges to main.
+Full documentation is available at [lemon.test/docs](https://github.com/berzi/lemon/tree/main/docs):
+
+- [Getting Started](docs/guide/getting-started.md)
+- [How It Works](docs/guide/how-it-works.md)
+- [Architecture](docs/architecture/overview.md)
+- [API Reference](docs/reference/agents.md)
+- [GitHub Actions Deployment](docs/deployment/github-actions.md)
 
 ## License
 
-Open Source 9
+Open Source
