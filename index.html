@@ -675,6 +675,17 @@ document.querySelectorAll('button, a, .feature-card, .agent-card, .step').forEac
   el.addEventListener('mouseleave', () => { cursor.classList.remove('hovered'); trail.classList.remove('hovered'); });
 });
 
+// ── NPM COPY ──
+const npmCmd = document.getElementById('npm-cmd');
+if (npmCmd) {
+  npmCmd.addEventListener('click', () => {
+    navigator.clipboard.writeText('npx lemonx@latest init').then(() => {
+      npmCmd.classList.add('copied');
+      setTimeout(() => npmCmd.classList.remove('copied'), 2000);
+    });
+  });
+}
+
 
 gsap.registerPlugin(ScrollTrigger, TextPlugin);
 
