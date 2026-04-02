@@ -3,7 +3,7 @@ import { defineConfig } from 'vitepress'
 export default defineConfig({
   title: 'lemon.test',
   description: 'AI-powered test generation, execution, and self-healing fixes',
-  base: '/lemon/',
+  base: '/docs/',
   themeConfig: {
     logo: '/logo.svg',
     nav: [
