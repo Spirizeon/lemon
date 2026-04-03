@@ -2,9 +2,27 @@ import "dotenv/config";
 import { mastra } from "./mastra";
 import { readdir } from "fs/promises";
 import { join } from "path";
+import { exec } from "child_process";
+import { promisify } from "util";
+
+const execAsync = promisify(exec);
 
 const TARGET_REPO = process.env.TARGET_REPO ?? process.cwd();
 const MAX_ITERATIONS = 5;
+const GITHUB_TOKEN = process.env.GITHUB_TOKEN ?? "";
+const GITHUB_REPOSITORY = process.env.GITHUB_REPOSITORY ?? "";
+const GITHUB_REF = process.env.GITHUB_REF ?? "";
+const GITHUB_SHA = process.env.GITHUB_SHA ?? "";
+const PR_BRANCH = `lemon/test-fix-${Date.now()}`;
+
+async function getChangedFiles(repoPath: string): Promise<string[]> {
+  try {
+    const { stdout } = await execAsync("git diff --name-only HEAD", { cwd: repoPath });
+    return stdout.trim().split("\n").filter(Boolean);
+  } catch {
+    return [];
+  }
+}
 
 async function discoverFiles(repoPath: string) {
   const entries = await readdir(repoPath, { recursive: true }) as string[];
@@ -63,6 +81,15 @@ const integrationGenerator = mastra.getAgent("integrationGeneratorAgent");
 const e2eGenerator = mastra.getAgent("e2eGeneratorAgent");
 const executor = mastra.getAgent("executorAgent");
 const editor = mastra.getAgent("editorAgent");
+
+// Initialize git for tracking changes
+try {
+  await execAsync("git rev-parse --is-inside-work-tree", { cwd: TARGET_REPO });
+} catch {
+  await execAsync("git init", { cwd: TARGET_REPO });
+}
+await execAsync("git add -A", { cwd: TARGET_REPO });
+await execAsync("git commit -m \"initial snapshot\" --allow-empty", { cwd: TARGET_REPO });
 
 // ── Unit Tests ──────────────────────────────────────────────────
 const unitFiles = await discoverFiles(TARGET_REPO);
@@ -153,7 +180,7 @@ async function runTestFixLoop(testDir: string, label: string) {
     const testFiles = await discoverTestFiles(TARGET_REPO, testDir);
     if (testFiles.length === 0) {
       console.log(`  No ${label} test files found. Skipping.`);
-      return { status: "no_tests", iterations: 0 };
+      return { status: "no_tests", iterations: 0, changedFiles: [] };
     }
 
     let allPassed = true;
@@ -179,12 +206,12 @@ async function runTestFixLoop(testDir: string, label: string) {
 
     if (allPassed) {
       console.log(`\n  ✅ All ${label} tests passed on iteration ${iteration}!`);
-      return { status: "passed", iterations: iteration };
+      return { status: "passed", iterations: iteration, changedFiles: await getChangedFiles(TARGET_REPO) };
     }
 
     if (iteration === MAX_ITERATIONS) {
       console.log(`\n  ⚠️  Max iterations reached for ${label} tests.`);
-      return { status: "max_iterations", iterations: iteration };
+      return { status: "max_iterations", iterations: iteration, changedFiles: await getChangedFiles(TARGET_REPO) };
     }
 
     console.log(`\n  🔧 Iteration ${iteration}: Fixing ${label} failures...`);
@@ -200,7 +227,7 @@ async function runTestFixLoop(testDir: string, label: string) {
     console.log(`  Editor: ${results.text.slice(0, 150)}`);
   }
 
-  return { status: "completed", iterations: MAX_ITERATIONS };
+  return { status: "completed", iterations: MAX_ITERATIONS, changedFiles: await getChangedFiles(TARGET_REPO) };
 }
 
 const unitResult = await runTestFixLoop("src/__tests__", "unit");
@@ -211,5 +238,100 @@ console.log("\n🏁 Done.");
 console.log(`   Unit tests: ${unitResult.status} (${unitResult.iterations} iterations)`);
 console.log(`   Integration tests: ${integrationResult.status} (${integrationResult.iterations} iterations)`);
 console.log(`   E2E tests: ${e2eResult.status} (${e2eResult.iterations} iterations)`);
+
+// ── PR Creation ──────────────────────────────────────────────────
+async function createPR(): Promise<string | null> {
+  if (!GITHUB_TOKEN || !GITHUB_REPOSITORY) {
+    console.log("  ⚠️  GITHUB_TOKEN or GITHUB_REPOSITORY not set — skipping PR creation");
+    return null;
+  }
+
+  const [owner, repo] = GITHUB_REPOSITORY.split("/");
+  const baseBranch = GITHUB_REF.replace("refs/heads/", "").replace("refs/pull/", "").replace("/merge", "");
+
+  const prTitle = `🍋 lemon: auto-generated tests + fixes for ${baseBranch}`;
+  const changedFiles = [
+    ...(unitResult.changedFiles || []),
+    ...(integrationResult.changedFiles || []),
+    ...(e2eResult.changedFiles || []),
+  ];
+
+  const prBody = `## 🍋 lemon — AI Test Report
+
+**Branch:** ${baseBranch}
+**Commit:** ${GITHUB_SHA.slice(0, 7)}
+
+### Test Results
+| Test Type | Status | Iterations |
+|---|---|---|
+| Unit | ${unitResult.status} | ${unitResult.iterations} |
+| Integration | ${integrationResult.status} | ${integrationResult.iterations} |
+| E2E | ${e2eResult.status} | ${e2eResult.iterations} |
+
+### What changed
+- Generated vitest unit, integration, and E2E tests for source files
+- Ran tests and collected pass/fail results
+- Applied code fixes to make tests pass
+
+### Changed files
+${changedFiles.length > 0 ? changedFiles.map((f: string) => `- \`${f}\``).join("\n") : "No files changed"}
+`;
+
+  try {
+    const cwd = TARGET_REPO;
+    const authUrl = `https://x-access-token:${GITHUB_TOKEN}@github.com/${GITHUB_REPOSITORY}.git`;
+
+    await execAsync(`git config user.name "lemon[bot]"`, { cwd });
+    await execAsync(`git config user.email "lemon[bot]@users.noreply.github.com"`, { cwd });
+    await execAsync(`git remote set-url origin ${authUrl}`, { cwd });
+    await execAsync(`git checkout -b ${PR_BRANCH}`, { cwd });
+    await execAsync(`git add -A`, { cwd });
+    const { stdout: statusOut } = await execAsync(`git status --porcelain`, { cwd });
+    if (!statusOut.trim()) {
+      console.log("  ℹ️  No changes to commit — skipping PR creation");
+      return null;
+    }
+
+    await execAsync(`git commit -m "🍋 lemon: generated tests and applied fixes"`, { cwd });
+    await execAsync(`git push origin ${PR_BRANCH}`, {
+      cwd,
+      env: { ...process.env, GIT_TERMINAL_PROMPT: "0" },
+    });
+
+    const res = await fetch(`https://api.github.com/repos/${owner}/${repo}/pulls`, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${GITHUB_TOKEN}`,
+        Accept: "application/vnd.github+json",
+        "Content-Type": "application/json",
+        "X-GitHub-Api-Version": "2022-11-28",
+      },
+      body: JSON.stringify({
+        title: prTitle,
+        body: prBody,
+        head: PR_BRANCH,
+        base: baseBranch,
+      }),
+    });
+
+    if (!res.ok) {
+      const err = await res.text();
+      console.log(`  ❌ Failed to open PR: ${err}`);
+      return null;
+    }
+
+    const data = await res.json();
+    console.log(`  ✅ PR created: ${data.html_url}`);
+    return data.html_url;
+  } catch (err: any) {
+    console.log(`  ❌ PR creation failed: ${err.message}`);
+    return null;
+  }
+}
+
+const prUrl = await createPR();
+if (prUrl) {
+  console.log(`\n🎉 Pull request opened: ${prUrl}`);
+}
 
 process.exit(0);

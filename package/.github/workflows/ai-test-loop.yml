@@ -6,6 +6,10 @@ on:
   pull_request:
     branches-ignore: [main]
 
+permissions:
+  contents: write
+  pull-requests: write
+
 jobs:
   ai-test-fix:
     runs-on: ubuntu-latest
@@ -13,6 +17,9 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          fetch-depth: 0
 
       - name: Set up Docker Compose
         run: |
@@ -23,6 +30,10 @@ jobs:
         env:
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
           CLOUDFLARE_API_KEY: ${{ secrets.CLOUDFLARE_API_KEY }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+          GITHUB_REF: ${{ github.ref }}
+          GITHUB_SHA: ${{ github.sha }}
         run: |
           docker compose -f lemon-compose.yml up --build --abort-on-container-exit --exit-code-from lemon
 
