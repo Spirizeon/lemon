@@ -1,6 +1,6 @@
 import express, { Request, Response } from "express";
 import { mastra } from "./mastra/index.js";
-import { readdir, mkdir, rm } from "fs/promises";
+import { readdir, readFile, mkdir, rm } from "fs/promises";
 import { join } from "path";
 import { exec } from "child_process";
 import { promisify } from "util";
@@ -18,13 +18,97 @@ const MAX_ITERATIONS = 5;
 const WORK_DIR = join(tmpdir(), "lemonx-workspaces");
 const GITHUB_TOKEN = process.env.GITHUB_TOKEN ?? "";
 
-// Configure git safe.directory to avoid "dubious ownership" errors in Docker/CI
-const gitSafeDirs = ["/workspace", "/tmp", WORK_DIR];
-for (const dir of gitSafeDirs) {
+async function getFileSha(owner: string, repo: string, path: string, branch: string): Promise<string | null> {
   try {
-    await execAsync(`git config --global --add safe.directory "${dir}"`);
+    const res = await fetch(
+      `https://api.github.com/repos/${owner}/${repo}/contents/${path}?ref=${branch}`,
+      {
+        headers: {
+          Authorization: `Bearer ${GITHUB_TOKEN}`,
+          Accept: "application/vnd.github+json",
+        },
+      }
+    );
+    if (!res.ok) return null;
+    const data = await res.json();
+    return data.sha;
   } catch {
-    // Ignore errors if the path doesn't exist
+    return null;
+  }
+}
+
+async function uploadFileToGitHub(
+  owner: string,
+  repo: string,
+  filePath: string,
+  content: string,
+  branch: string
+): Promise<void> {
+  const sha = await getFileSha(owner, repo, filePath, branch);
+
+  const res = await fetch(
+    `https://api.github.com/repos/${owner}/${repo}/contents/${filePath}`,
+    {
+      method: "PUT",
+      headers: {
+        Authorization: `Bearer ${GITHUB_TOKEN}`,
+        Accept: "application/vnd.github+json",
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        message: `🍋 lemonx: generated ${filePath}`,
+        content: Buffer.from(content).toString("base64"),
+        branch,
+        sha: sha ?? undefined,
+      }),
+    }
+  );
+
+  if (!res.ok) {
+    const err = await res.text();
+    throw new Error(`Failed to upload ${filePath}: ${err}`);
+  }
+}
+
+async function getBaseBranchSha(owner: string, repo: string, branch: string): Promise<string | null> {
+  try {
+    const res = await fetch(
+      `https://api.github.com/repos/${owner}/${repo}/branches/${branch}`,
+      {
+        headers: {
+          Authorization: `Bearer ${GITHUB_TOKEN}`,
+          Accept: "application/vnd.github+json",
+        },
+      }
+    );
+    if (!res.ok) return null;
+    const data = await res.json();
+    return data.commit.sha;
+  } catch {
+    return null;
+  }
+}
+
+async function createBranch(owner: string, repo: string, branch: string, baseSha: string): Promise<void> {
+  const res = await fetch(
+    `https://api.github.com/repos/${owner}/${repo}/git/refs`,
+    {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${GITHUB_TOKEN}`,
+        Accept: "application/vnd.github+json",
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        ref: `refs/heads/${branch}`,
+        sha: baseSha,
+      }),
+    }
+  );
+
+  if (!res.ok) {
+    const err = await res.text();
+    throw new Error(`Failed to create branch ${branch}: ${err}`);
   }
 }
 
@@ -181,7 +265,7 @@ app.post("/webhook/test-and-fix", async (req: Request, res: Response) => {
     };
 
     // Open PR if all passed and there are changes
-    if (allPassed && summary.changedFiles.length > 0) {
+    if (allPassed && summary.changedFiles.length > 0 && workspace) {
       const prBranch = `lemonx/test-fix-${Date.now()}`;
       const prTitle = `🍋 lemonx: auto-generated tests + fixes for ${branch}`;
       const prBody = `## 🍋 lemonx — AI Test Report
@@ -206,27 +290,54 @@ app.post("/webhook/test-and-fix", async (req: Request, res: Response) => {
 ${summary.changedFiles.map((f: string) => `- \`${f}\``).join("\n")}
 `;
 
-      await execAsync(`git config user.name "lemonx[bot]" && git config user.email "lemonx[bot]@users.noreply.github.com"`, { cwd: workspace });
-      await execAsync(`git checkout -b ${prBranch}`, { cwd: workspace });
-      await execAsync(`git add -A`, { cwd: workspace });
-      const { stdout: statusOut } = await execAsync(`git status --porcelain`, { cwd: workspace });
-      if (statusOut.trim()) {
-        await execAsync(`git commit -m "🍋 lemonx: generated tests and applied fixes"`, { cwd: workspace });
+      try {
+        const match = repoUrl.replace(/\.git$/, "").match(/github\.com[:/]([^/]+)\/([^/]+)/);
+        if (!match) {
+          console.log("  ⚠️  Could not parse repo URL for upload");
+        } else {
+          const [, owner, repo] = match;
+          const testDirs = ["src/__tests__", "tests/integration", "tests/e2e"];
+          const files: { path: string; content: string }[] = [];
 
-        let pushUrl = repoUrl;
-        if (GITHUB_TOKEN && repoUrl.startsWith("https://github.com/")) {
-          pushUrl = repoUrl.replace("https://github.com/", `https://x-access-token:${GITHUB_TOKEN}@github.com/`);
-        }
-        await execAsync(`git push origin ${prBranch}`, {
-          cwd: workspace,
-          env: { ...process.env, GIT_TERMINAL_PROMPT: "0" },
-        });
+          for (const dir of testDirs) {
+            try {
+              const entries = await readdir(join(workspace, dir), { recursive: true }) as string[];
+              for (const entry of entries) {
+                if (entry.endsWith(".test.ts") || entry.endsWith(".test.js")) {
+                  const fullPath = join(workspace, dir, entry);
+                  const content = await readFile(fullPath, "utf-8");
+                  files.push({ path: `${dir}/${entry}`, content });
+                }
+              }
+            } catch {
+              // Directory doesn't exist, skip
+            }
+          }
 
-        const prUrl = await openPR(repoUrl, branch, prBranch, prTitle, prBody);
-        if (prUrl) {
-          summary.pr = prUrl;
-          console.log(`\n🎉 PR opened: ${prUrl}`);
+          if (files.length > 0) {
+            const baseSha = await getBaseBranchSha(owner, repo, branch);
+            if (!baseSha) {
+              console.log("  ❌ Could not get base branch SHA");
+            } else {
+              await createBranch(owner, repo, prBranch, baseSha);
+              console.log(`  🌿 Created branch: ${prBranch}`);
+
+              console.log(`  📤 Uploading ${files.length} files to GitHub...`);
+              for (const file of files) {
+                await uploadFileToGitHub(owner, repo, file.path, file.content, prBranch);
+                console.log(`    ✓ ${file.path}`);
+              }
+
+              const prUrl = await openPR(repoUrl, branch, prBranch, prTitle, prBody);
+              if (prUrl) {
+                summary.pr = prUrl;
+                console.log(`\n🎉 PR opened: ${prUrl}`);
+              }
+            }
+          }
         }
+      } catch (err) {
+        console.log(`  ⚠️  PR creation skipped: ${err}`);
       }
     }
 
@@ -566,13 +677,8 @@ async function runTestFixLoop(targetDir: string, testType: "unit" | "integration
     },
   };
 
-  const cfg = config[testType];
+const cfg = config[testType];
   const generator = mastra.getAgent(cfg.generatorName);
-
-  // Initialize git for tracking changes
-  await execAsync("git init", { cwd: targetDir });
-  await execAsync("git add -A", { cwd: targetDir });
-  await execAsync("git commit -m \"initial snapshot\" --allow-empty", { cwd: targetDir });
 
   const files = await cfg.discoverFn();
   console.log(`🔍 Found ${files.length} source files for ${cfg.label} tests`);

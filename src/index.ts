@@ -1,6 +1,6 @@
 import "dotenv/config";
 import { mastra } from "./mastra";
-import { readdir } from "fs/promises";
+import { readdir, readFile } from "fs/promises";
 import { join } from "path";
 import { exec } from "child_process";
 import { promisify } from "util";
@@ -83,24 +83,7 @@ const e2eGenerator = mastra.getAgent("e2eGeneratorAgent");
 const executor = mastra.getAgent("executorAgent");
 const editor = mastra.getAgent("editorAgent");
 
-// Configure git safe.directory to avoid "dubious ownership" errors in Docker/CI
-const workspacePaths = ["/workspace", TARGET_REPO, LEMON_WORKSPACE];
-for (const path of workspacePaths) {
-  try {
-    await execAsync(`git config --global --add safe.directory "${path}"`);
-  } catch {
-    // Ignore errors if the path doesn't exist
-  }
-}
-
-// Initialize git for tracking changes
-try {
-  await execAsync("git rev-parse --is-inside-work-tree", { cwd: TARGET_REPO });
-} catch {
-  await execAsync("git init", { cwd: TARGET_REPO });
-}
-await execAsync("git add -A", { cwd: TARGET_REPO });
-await execAsync("git commit -m \"initial snapshot\" --allow-empty", { cwd: TARGET_REPO });
+const generatedFiles: { path: string; content: string }[] = [];
 
 // ── Unit Tests ──────────────────────────────────────────────────
 const unitFiles = await discoverFiles(TARGET_REPO);
@@ -250,6 +233,123 @@ console.log(`   Unit tests: ${unitResult.status} (${unitResult.iterations} itera
 console.log(`   Integration tests: ${integrationResult.status} (${integrationResult.iterations} iterations)`);
 console.log(`   E2E tests: ${e2eResult.status} (${e2eResult.iterations} iterations)`);
 
+// ── GitHub API Helper Functions ──────────────────────────────────────
+async function getBaseBranchSha(owner: string, repo: string, branch: string): Promise<string | null> {
+  try {
+    const res = await fetch(
+      `https://api.github.com/repos/${owner}/${repo}/branches/${branch}`,
+      {
+        headers: {
+          Authorization: `Bearer ${GITHUB_TOKEN}`,
+          Accept: "application/vnd.github+json",
+        },
+      }
+    );
+    if (!res.ok) return null;
+    const data = await res.json();
+    return data.commit.sha;
+  } catch {
+    return null;
+  }
+}
+
+async function createBranch(owner: string, repo: string, branch: string, baseSha: string): Promise<void> {
+  const res = await fetch(
+    `https://api.github.com/repos/${owner}/${repo}/git/refs`,
+    {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${GITHUB_TOKEN}`,
+        Accept: "application/vnd.github+json",
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        ref: `refs/heads/${branch}`,
+        sha: baseSha,
+      }),
+    }
+  );
+
+  if (!res.ok) {
+    const err = await res.text();
+    throw new Error(`Failed to create branch ${branch}: ${err}`);
+  }
+}
+
+async function getFileSha(owner: string, repo: string, path: string, branch: string): Promise<string | null> {
+  try {
+    const res = await fetch(
+      `https://api.github.com/repos/${owner}/${repo}/contents/${path}?ref=${branch}`,
+      {
+        headers: {
+          Authorization: `Bearer ${GITHUB_TOKEN}`,
+          Accept: "application/vnd.github+json",
+        },
+      }
+    );
+    if (!res.ok) return null;
+    const data = await res.json();
+    return data.sha;
+  } catch {
+    return null;
+  }
+}
+
+async function uploadFileToGitHub(
+  owner: string,
+  repo: string,
+  filePath: string,
+  content: string,
+  branch: string
+): Promise<void> {
+  const sha = await getFileSha(owner, repo, filePath, branch);
+
+  const res = await fetch(
+    `https://api.github.com/repos/${owner}/${repo}/contents/${filePath}`,
+    {
+      method: "PUT",
+      headers: {
+        Authorization: `Bearer ${GITHUB_TOKEN}`,
+        Accept: "application/vnd.github+json",
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        message: `🍋 lemon: generated ${filePath}`,
+        content: Buffer.from(content).toString("base64"),
+        branch,
+        sha: sha ?? undefined,
+      }),
+    }
+  );
+
+  if (!res.ok) {
+    const err = await res.text();
+    throw new Error(`Failed to upload ${filePath}: ${err}`);
+  }
+}
+
+async function collectGeneratedFiles(): Promise<{ path: string; content: string }[]> {
+  const files: { path: string; content: string }[] = [];
+  const dirs = ["src/__tests__", "tests/integration", "tests/e2e"];
+
+  for (const dir of dirs) {
+    try {
+      const entries = await readdir(join(TARGET_REPO, dir), { recursive: true }) as string[];
+      for (const entry of entries) {
+        if (entry.endsWith(".test.ts") || entry.endsWith(".test.js")) {
+          const fullPath = join(TARGET_REPO, dir, entry);
+          const content = await readFile(fullPath, "utf-8");
+          files.push({ path: `${dir}/${entry}`, content });
+        }
+      }
+    } catch {
+      // Directory doesn't exist, skip
+    }
+  }
+
+  return files;
+}
+
 // ── PR Creation ──────────────────────────────────────────────────
 async function createPR(): Promise<string | null> {
   if (!GITHUB_TOKEN || !GITHUB_REPOSITORY) {
@@ -289,25 +389,26 @@ ${changedFiles.length > 0 ? changedFiles.map((f: string) => `- \`${f}\``).join("
 `;
 
   try {
-    const cwd = TARGET_REPO;
-    const authUrl = `https://x-access-token:${GITHUB_TOKEN}@github.com/${GITHUB_REPOSITORY}.git`;
-
-    await execAsync(`git config user.name "lemon[bot]"`, { cwd });
-    await execAsync(`git config user.email "lemon[bot]@users.noreply.github.com"`, { cwd });
-    await execAsync(`git remote set-url origin ${authUrl}`, { cwd });
-    await execAsync(`git checkout -b ${PR_BRANCH}`, { cwd });
-    await execAsync(`git add -A`, { cwd });
-    const { stdout: statusOut } = await execAsync(`git status --porcelain`, { cwd });
-    if (!statusOut.trim()) {
-      console.log("  ℹ️  No changes to commit — skipping PR creation");
+    const files = await collectGeneratedFiles();
+    if (files.length === 0) {
+      console.log("  ℹ️  No generated test files found — skipping PR creation");
       return null;
     }
 
-    await execAsync(`git commit -m "🍋 lemon: generated tests and applied fixes"`, { cwd });
-    await execAsync(`git push origin ${PR_BRANCH}`, {
-      cwd,
-      env: { ...process.env, GIT_TERMINAL_PROMPT: "0" },
-    });
+    const baseSha = await getBaseBranchSha(owner, repo, baseBranch);
+    if (!baseSha) {
+      console.log("  ❌ Could not get base branch SHA");
+      return null;
+    }
+
+    await createBranch(owner, repo, PR_BRANCH, baseSha);
+    console.log(`  🌿 Created branch: ${PR_BRANCH}`);
+
+    console.log(`  📤 Uploading ${files.length} files to GitHub...`);
+    for (const file of files) {
+      await uploadFileToGitHub(owner, repo, file.path, file.content, PR_BRANCH);
+      console.log(`    ✓ ${file.path}`);
+    }
 
     const res = await fetch(`https://api.github.com/repos/${owner}/${repo}/pulls`, {
       method: "POST",
