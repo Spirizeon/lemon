@@ -63,12 +63,36 @@ function logTestResult(testFile: string, passed: boolean, output: string, failur
 
 const TARGET_REPO = process.env.TARGET_REPO ?? process.cwd();
 const LEMON_WORKSPACE = process.env.LEMON_WORKSPACE ?? "/workspace";
-const MAX_ITERATIONS = 5;
-const GITHUB_TOKEN = process.env.GITHUB_TOKEN ?? "";
+const MAX_ITERATIONS = process.env.SKIP_TESTS === "true" ? 0 : 5;
+const SKIP_TESTS = process.env.SKIP_TESTS === "true";
+const GITHUB_TOKEN = process.env.LEMONX ?? process.env.GITHUB_TOKEN ?? "";
 const GITHUB_REPOSITORY = process.env.GITHUB_REPOSITORY ?? "";
 const GITHUB_REF = process.env.GITHUB_REF ?? "";
 const GITHUB_SHA = process.env.GITHUB_SHA ?? "";
 const PR_BRANCH = `lemon/test-fix-${Date.now()}`;
+
+function checkRequiredEnvVars() {
+  const missing: string[] = [];
+  
+  if (!process.env.CLOUDFLARE_ACCOUNT_ID) missing.push("CLOUDFLARE_ACCOUNT_ID");
+  if (!process.env.CLOUDFLARE_API_KEY) missing.push("CLOUDFLARE_API_KEY");
+  
+  const hasGitHubToken = process.env.LEMONX || process.env.GITHUB_TOKEN;
+  if (!hasGitHubToken) {
+    missing.push("LEMONX (GitHub PAT)");
+  }
+  
+  if (missing.length > 0) {
+    console.log(`\n${LOG_PREFIX} ⚠️  Missing required repository secrets:`);
+    missing.forEach(v => console.log(`   - ${v}`));
+    console.log(`\n${LOG_PREFIX} Add secrets at: Settings → Secrets and variables → Actions`);
+    console.log(`   - CLOUDFLARE_ACCOUNT_ID`);
+    console.log(`   - CLOUDFLARE_API_KEY`);
+    console.log(`   - LEMONX (Personal Access Token with 'repo' scope)\n`);
+  }
+}
+
+checkRequiredEnvVars();
 
 async function getChangedFiles(repoPath: string): Promise<string[]> {
   try {
@@ -138,6 +162,11 @@ const executor = mastra.getAgent("executorAgent");
 const editor = mastra.getAgent("editorAgent");
 
 const generatedFiles: { path: string; content: string }[] = [];
+
+if (SKIP_TESTS) {
+  console.log(`\n${LOG_PREFIX} ⏭️  SKIP_TESTS enabled — skipping test generation and execution`);
+  console.log(`${LOG_PREFIX} Proceeding directly to PR creation...`);
+} else {
 
 // ── Unit Tests ──────────────────────────────────────────────────
 const unitFiles = await discoverFiles(TARGET_REPO);
@@ -335,6 +364,8 @@ console.log(`   Unit tests: ${unitResult.status} (${unitResult.iterations} itera
 console.log(`   Integration tests: ${integrationResult.status} (${integrationResult.iterations} iterations)`);
 console.log(`   E2E tests: ${e2eResult.status} (${e2eResult.iterations} iterations)`);
 
+} // End of SKIP_TESTS check
+
 // ── GitHub API Helper Functions ──────────────────────────────────────
 async function getBaseBranchSha(owner: string, repo: string, branch: string): Promise<string | null> {
   try {
@@ -462,14 +493,27 @@ async function createPR(): Promise<string | null> {
   const [owner, repo] = GITHUB_REPOSITORY.split("/");
   const baseBranch = GITHUB_REF.replace("refs/heads/", "").replace("refs/pull/", "").replace("/merge", "");
 
-  const prTitle = `🍋 lemon: auto-generated tests + fixes for ${baseBranch}`;
-  const changedFiles = [
-    ...(unitResult.changedFiles || []),
-    ...(integrationResult.changedFiles || []),
-    ...(e2eResult.changedFiles || []),
-  ];
+  const prTitle = SKIP_TESTS 
+    ? `🍋 lemon: test run for ${baseBranch}` 
+    : `🍋 lemon: auto-generated tests + fixes for ${baseBranch}`;
+    
+  const changedFiles = SKIP_TESTS 
+    ? await getChangedFiles(TARGET_REPO)
+    : [
+        ...(unitResult.changedFiles || []),
+        ...(integrationResult.changedFiles || []),
+        ...(e2eResult.changedFiles || []),
+      ];
 
-  const prBody = `## 🍋 lemon — AI Test Report
+  const prBody = SKIP_TESTS 
+    ? `## 🍋 lemon — Test Run (SKIP_TESTS mode)
+
+**Branch:** ${baseBranch}
+**Commit:** ${GITHUB_SHA.slice(0, 7)}
+
+Tests were skipped. This is a test run to verify PR creation.
+`
+    : `## 🍋 lemon — AI Test Report
 
 **Branch:** ${baseBranch}
 **Commit:** ${GITHUB_SHA.slice(0, 7)}
@@ -491,6 +535,72 @@ ${changedFiles.length > 0 ? changedFiles.map((f: string) => `- \`${f}\``).join("
 `;
 
   try {
+    if (SKIP_TESTS) {
+      console.log(`  📤 Using existing changed files from ${TARGET_REPO}`);
+      const files = await collectGeneratedFiles();
+      if (files.length === 0 && changedFiles.length === 0) {
+        console.log("  ℹ️  No files to commit — skipping PR creation");
+        return null;
+      }
+      
+      const baseSha = await getBaseBranchSha(owner, repo, baseBranch);
+      if (!baseSha) {
+        console.log("  ❌ Could not get base branch SHA");
+        return null;
+      }
+
+      await createBranch(owner, repo, PR_BRANCH, baseSha);
+      console.log(`  🌿 Created branch: ${PR_BRANCH}`);
+
+      if (files.length > 0) {
+        console.log(`  📤 Uploading ${files.length} files to GitHub...`);
+        for (const file of files) {
+          await uploadFileToGitHub(owner, repo, file.path, file.content, PR_BRANCH);
+          console.log(`    ✓ ${file.path}`);
+        }
+      }
+
+      if (changedFiles.length > 0) {
+        console.log(`  📤 Committing ${changedFiles.length} changed files...`);
+        for (const filePath of changedFiles) {
+          try {
+            const fullPath = join(TARGET_REPO, filePath);
+            const content = await readFile(fullPath, "utf-8");
+            await uploadFileToGitHub(owner, repo, filePath, content, PR_BRANCH);
+            console.log(`    ✓ ${filePath}`);
+          } catch {
+            console.log(`    ⚠️  Could not read: ${filePath}`);
+          }
+        }
+      }
+
+      const res = await fetch(`https://api.github.com/repos/${owner}/${repo}/pulls`, {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${GITHUB_TOKEN}`,
+          Accept: "application/vnd.github+json",
+          "Content-Type": "application/json",
+          "X-GitHub-Api-Version": "2022-11-28",
+        },
+        body: JSON.stringify({
+          title: prTitle,
+          body: prBody,
+          head: PR_BRANCH,
+          base: baseBranch,
+        }),
+      });
+
+      if (!res.ok) {
+        const err = await res.text();
+        console.log(`  ❌ Failed to open PR: ${err}`);
+        return null;
+      }
+
+      const data = await res.json();
+      console.log(`  ✅ PR created: ${data.html_url}`);
+      return data.html_url;
+    }
+
     const files = await collectGeneratedFiles();
     if (files.length === 0) {
       console.log("  ℹ️  No generated test files found — skipping PR creation");
