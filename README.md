@@ -77,7 +77,7 @@ Your Repo (GitHub)
 GitHub Actions Runner (ubuntu-latest)
    ├── Checkout your code
    ├── Redis (agent state)
-└── lemon.test agents
+   └── lemon.test agents
          ├── testGeneratorAgent
          ├── integrationGeneratorAgent
          ├── e2eGeneratorAgent

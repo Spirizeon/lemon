@@ -63,8 +63,7 @@ function logTestResult(testFile: string, passed: boolean, output: string, failur
 
 const TARGET_REPO = process.env.TARGET_REPO ?? process.cwd();
 const LEMON_WORKSPACE = process.env.LEMON_WORKSPACE ?? "/workspace";
-const MAX_ITERATIONS = process.env.SKIP_TESTS === "true" ? 0 : 5;
-const SKIP_TESTS = process.env.SKIP_TESTS === "true";
+const MAX_ITERATIONS = 5;
 const GITHUB_TOKEN = process.env.LEMONX ?? process.env.GITHUB_TOKEN ?? "";
 const GITHUB_REPOSITORY = process.env.GITHUB_REPOSITORY ?? "";
 const GITHUB_REF = process.env.GITHUB_REF ?? "";
