@@ -119,6 +119,7 @@ const EXCLUDED_PATTERNS = [
 const SOURCE_DIRS = ["src", "lib", "app"];
 
 function isSourceFile(filePath: string): boolean {
+  if (!filePath.endsWith(".ts") && !filePath.endsWith(".js")) return false;
   const parts = filePath.split("/");
   if (!SOURCE_DIRS.includes(parts[0])) return false;
   if (parts.some(p => EXCLUDED_DIRS.includes(p))) return false;
