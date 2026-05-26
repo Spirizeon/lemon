@@ -155,8 +155,10 @@ Done. Next steps:
   1. Add your secrets to GitHub:
      - CLOUDFLARE_ACCOUNT_ID
      - CLOUDFLARE_API_KEY
+     - LEMONX
 
      Settings -> Secrets and variables -> Actions
+     NOTE: LEMONX is your GitHub's personal access token
 
   2. Commit and push:
      git add .github/workflows/ai-test-loop.yml lemon-compose.yml README.md
