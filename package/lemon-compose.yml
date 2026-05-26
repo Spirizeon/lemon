@@ -27,6 +27,7 @@ services:
       - GITHUB_REF=${GITHUB_REF}
       - GITHUB_SHA=${GITHUB_SHA}
       - TARGET_REPO=/workspace
+      - LEMON_WORKSPACE=/workspace
       - SKIP_TESTS=${SKIP_TESTS:-false}
       - DEBUG=${DEBUG:-false}
       - VERBOSE=${VERBOSE:-true}

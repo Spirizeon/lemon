@@ -9,7 +9,8 @@ export const listFilesTool = createTool({
   inputSchema: z.object({ dir: z.string() }),
   outputSchema: z.object({ files: z.array(z.string()) }),
   execute: async ({ context }) => {
-    const entries = await readdir(join(process.cwd(), context.dir), {
+    const base = process.env.LEMON_WORKSPACE ?? process.env.TARGET_REPO ?? process.cwd();
+    const entries = await readdir(join(base, context.dir), {
       recursive: true,
     }) as string[];
     const files = entries.filter(f =>

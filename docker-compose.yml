@@ -26,9 +26,14 @@ services:
       - GITHUB_REPOSITORY=${GITHUB_REPOSITORY}
       - GITHUB_REF=${GITHUB_REF}
       - GITHUB_SHA=${GITHUB_SHA}
+      # Bind mount the target repo code
+      - TARGET_REPO=/workspace
+      - LEMON_WORKSPACE=/workspace
       # Logging / Debugging (enabled by default)
       - VERBOSE=${VERBOSE:-true}
       - DEBUG=${DEBUG:-false}
+    volumes:
+      - .:/workspace
     stop_grace_period: 5s
 
 volumes:

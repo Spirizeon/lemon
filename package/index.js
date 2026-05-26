@@ -29,8 +29,13 @@ jobs:
         env:
           CLOUDFLARE_ACCOUNT_ID: \${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
           CLOUDFLARE_API_KEY: \${{ secrets.CLOUDFLARE_API_KEY }}
+          LEMONX: \${{ secrets.LEMONX }}
+          GITHUB_TOKEN: \${{ secrets.GITHUB_TOKEN }}
+          GITHUB_REPOSITORY: \${{ github.repository }}
+          GITHUB_REF: \${{ github.ref }}
+          GITHUB_SHA: \${{ github.sha }}
         run: |
-          docker compose -f lemon-compose.yml up --build --abort-on-container-exit --exit-code-from lemon
+          docker compose -f lemon-compose.yml up --abort-on-container-exit --exit-code-from lemon
 
       - name: Cleanup
         if: always()
@@ -58,8 +63,20 @@ const DOCKER_COMPOSE_YML = `services:
     environment:
       - CLOUDFLARE_ACCOUNT_ID=\${CLOUDFLARE_ACCOUNT_ID}
       - CLOUDFLARE_API_KEY=\${CLOUDFLARE_API_KEY}
+      - LEMONX=\${LEMONX}
+      - GITHUB_TOKEN=\${GITHUB_TOKEN}
+      - GITHUB_REPOSITORY=\${GITHUB_REPOSITORY}
+      - GITHUB_REF=\${GITHUB_REF}
+      - GITHUB_SHA=\${GITHUB_SHA}
       - REDIS_HOST=redis
       - REDIS_PORT=6379
+      - TARGET_REPO=/workspace
+      - LEMON_WORKSPACE=/workspace
+      - SKIP_TESTS=\${SKIP_TESTS:-false}
+      - DEBUG=\${DEBUG:-false}
+      - VERBOSE=\${VERBOSE:-true}
+    volumes:
+      - .:/workspace
     stop_grace_period: 5s
 
 volumes:

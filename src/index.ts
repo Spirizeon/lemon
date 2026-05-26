@@ -102,29 +102,46 @@ async function getChangedFiles(repoPath: string): Promise<string[]> {
   }
 }
 
+const EXCLUDED_DIRS = [
+  "node_modules", "__tests__", "tests", "test", "spec", "e2e", "integration",
+  "dist", "build", ".next", "out", ".cache", "coverage",
+  "seeds", "migrations", "public",
+];
+
+const EXCLUDED_PATTERNS = [
+  /\.config\.(ts|js)$/i,
+  /\.d\.ts$/,
+  /\.test\.(ts|js)$/,
+  /\.spec\.(ts|js)$/,
+  /\.e2e\.(ts|js)$/,
+];
+
+const SOURCE_DIRS = ["src", "lib", "app"];
+
+function isSourceFile(filePath: string): boolean {
+  const parts = filePath.split("/");
+  if (!SOURCE_DIRS.includes(parts[0])) return false;
+  if (parts.some(p => EXCLUDED_DIRS.includes(p))) return false;
+  if (EXCLUDED_PATTERNS.some(p => p.test(filePath))) return false;
+  return true;
+}
+
+function testFilePath(sourceFile: string, testDir: string): string {
+  const relativePath = sourceFile.startsWith("src/") ? sourceFile.slice(4) : sourceFile;
+  const withoutExt = relativePath.replace(/\.(ts|js)$/, "");
+  return `${testDir}/${withoutExt}.test.ts`;
+}
+
 async function discoverFiles(repoPath: string) {
   const entries = await readdir(repoPath, { recursive: true }) as string[];
-  return entries
-    .filter(f =>
-      (f.endsWith(".ts") || f.endsWith(".js")) &&
-      !f.includes("node_modules") &&
-      !f.includes("__tests__") &&
-      !f.includes(".d.ts") &&
-      !f.includes("seeds/") &&
-      !f.includes("migrations/") &&
-      !f.includes("public/")
-    )
-    .slice(0, 5);
+  return entries.filter(isSourceFile).slice(0, 5);
 }
 
 async function discoverIntegrationFiles(repoPath: string) {
   const entries = await readdir(repoPath, { recursive: true }) as string[];
   return entries
     .filter(f =>
-      (f.endsWith(".ts") || f.endsWith(".js")) &&
-      !f.includes("node_modules") &&
-      !f.includes("__tests__") &&
-      !f.includes(".d.ts") &&
+      isSourceFile(f) &&
       (f.includes("routes") || f.includes("api") || f.includes("service") || f.includes("controller") || f.includes("middleware") || f.includes("handler"))
     )
     .slice(0, 5);
@@ -134,10 +151,7 @@ async function discoverE2EFiles(repoPath: string) {
   const entries = await readdir(repoPath, { recursive: true }) as string[];
   return entries
     .filter(f =>
-      (f.endsWith(".ts") || f.endsWith(".js")) &&
-      !f.includes("node_modules") &&
-      !f.includes("__tests__") &&
-      !f.includes(".d.ts") &&
+      isSourceFile(f) &&
       (f.includes("app") || f.includes("server") || f.includes("index") || f.includes("routes") || f.includes("auth"))
     )
     .slice(0, 3);
@@ -173,17 +187,18 @@ console.log(`\n${LOG_PREFIX} 📝 Generating unit tests...`);
 for (const file of unitFiles) {
   logStep("TEST_GENERATION", `Generating unit test for: ${file}`);
   
+  const testPath = testFilePath(file, "src/__tests__");
   const prompt = `
     Do the following steps in order:
     1. Call fetch-analysis with filePath="${file}" to get the stored analysis context.
     2. Call read-file with path="${file}" to read the source code.
     3. Write a comprehensive vitest unit test file for this source file.
     4. Call write-file with:
-       - path="src/__tests__/${file.replace(/^src\//, "").replace(/\.ts$/, ".test.ts")}"
+       - path="${testPath}"
        - content = the full test file you wrote
     5. Call store-tests with:
        - filePath="${file}"
-       - testFilePath="src/__tests__/${file.replace(/^src\//, "").replace(/\.ts$/, ".test.ts")}"
+       - testFilePath="${testPath}"
        - testCode = the full test file content
     Do all 5 steps now.
   `;
@@ -209,17 +224,18 @@ if (integrationFiles.length > 0) {
   for (const file of integrationFiles) {
     logStep("TEST_GENERATION", `Generating integration test for: ${file}`);
     
+    const testPath = testFilePath(file, "tests/integration");
     const prompt = `
       Do the following steps in order:
       1. Call fetch-analysis with filePath="${file}" to get the stored analysis context.
       2. Call read-file with path="${file}" to read the source code.
       3. Write a comprehensive vitest integration test file for this source file.
       4. Call write-file with:
-         - path="tests/integration/${file.replace(/^src\//, "").replace(/\.ts$/, ".test.ts")}"
+         - path="${testPath}"
          - content = the full test file you wrote
       5. Call store-tests with:
          - filePath="${file}"
-         - testFilePath="tests/integration/${file.replace(/^src\//, "").replace(/\.ts$/, ".test.ts")}"
+         - testFilePath="${testPath}"
          - testCode = the full test file content
       Do all 5 steps now.
     `;
@@ -246,17 +262,18 @@ if (e2eFiles.length > 0) {
   for (const file of e2eFiles) {
     logStep("TEST_GENERATION", `Generating E2E test for: ${file}`);
     
+    const testPath = testFilePath(file, "tests/e2e");
     const prompt = `
       Do the following steps in order:
       1. Call fetch-analysis with filePath="${file}" to get the stored analysis context.
       2. Call read-file with path="${file}" to read the source code.
       3. Write a comprehensive vitest E2E test file for this source file.
       4. Call write-file with:
-         - path="tests/e2e/${file.replace(/^src\//, "").replace(/\.ts$/, ".test.ts")}"
+         - path="${testPath}"
          - content = the full test file you wrote
       5. Call store-tests with:
          - filePath="${file}"
-         - testFilePath="tests/e2e/${file.replace(/^src\//, "").replace(/\.ts$/, ".test.ts")}"
+         - testFilePath="${testPath}"
          - testCode = the full test file content
       Do all 5 steps now.
     `;

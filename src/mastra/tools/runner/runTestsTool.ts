@@ -37,17 +37,11 @@ export const runTestsTool = createTool({
     }),
   }),
   execute: async ({ testFilePath }) => {
-    const workspace = process.env.LEMON_WORKSPACE;
+    const workspace = process.env.LEMON_WORKSPACE ?? process.env.TARGET_REPO ?? process.cwd();
     const startTime = Date.now();
     
     console.log(`${LOG_PREFIX} 📝 Executing test file: ${testFilePath}`);
     console.log(`${LOG_PREFIX} 📁 Workspace: ${workspace}`);
-    
-    if (!workspace) {
-      const err = "LEMON_WORKSPACE not set";
-      console.log(`${LOG_PREFIX} ❌ Error: ${err}`);
-      return { passed: false, output: err, failures: [], metadata: { testFile: testFilePath, exitCode: 1, duration: 0 } };
-    }
     try {
       console.log(`${LOG_PREFIX} ⚙️ Running: npx vitest run ${testFilePath} --reporter=verbose`);
       
