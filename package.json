@@ -9,10 +9,9 @@
     "test": "vitest run",
     "test:integration": "vitest run tests/integration",
     "test:e2e": "vitest run tests/e2e",
-    "test:watch": "vitest",
-    "docs:dev": "vitepress dev docs",
-    "docs:build": "vitepress build docs",
-    "docs:preview": "vitepress preview docs"
+    "test:watch": "vitest"
+    
+
   },
   "dependencies": {
     "@mastra/core": "latest",
@@ -28,7 +27,6 @@
   "devDependencies": {
     "@types/node": "^25.5.0",
     "tsx": "latest",
-    "typescript": "latest",
-    "vitepress": "^1.6.4"
+    "typescript": "latest"
   }
 }
