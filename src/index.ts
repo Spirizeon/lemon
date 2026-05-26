@@ -128,8 +128,9 @@ function isSourceFile(filePath: string): boolean {
 
 function testFilePath(sourceFile: string, testDir: string): string {
   const relativePath = sourceFile.startsWith("src/") ? sourceFile.slice(4) : sourceFile;
-  const withoutExt = relativePath.replace(/\.(ts|js)$/, "");
-  return `${testDir}/${withoutExt}.test.ts`;
+  const baseName = relativePath.replace(/\.(ts|js)$/, "");
+  const suffix = baseName.match(/\.(test|spec|e2e)$/) ? "" : ".test";
+  return `${testDir}/${baseName}${suffix}.ts`;
 }
 
 async function discoverFiles(repoPath: string) {
