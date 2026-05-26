@@ -56,7 +56,7 @@ const DOCKER_COMPOSE_YML = `services:
       retries: 5
 
   lemon:
-    image: delcagox/lemonx:latest
+    image: ghcr.io/spirizeon/lemonx
     depends_on:
       redis:
         condition: service_healthy
